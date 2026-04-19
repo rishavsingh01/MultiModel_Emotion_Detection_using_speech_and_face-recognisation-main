@@ -1,0 +1,213 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Emotion Recognition System</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+</head>
+<body>
+<div class="container">
+    <h1>Emotion Recognition System</h1>
+
+    <div class="card">
+        <h2>Record Audio</h2>
+        <button id="startBtn" onclick="startProcess()">Start Detection</button>
+        <p id="status">Click the button to start recording.</p>
+        <div class="progress-wrap">
+            <div id="recordProgress" class="progress-bar"></div>
+        </div>
+    </div>
+
+    <div class="card">
+        <h2>Live Video Feed</h2>
+        <img id="videoFeed" src="{{ url_for('video_feed') }}" alt="Video Feed" width="500">
+    </div>
+
+    <div class="card">
+        <h2>Speech Timeline</h2>
+        <ul id="timeline"></ul>
+    </div>
+
+    <div class="card">
+        <h2>Speech Summary</h2>
+        <p id="speechEmotion">-</p>
+        <div id="confidenceBars" class="confidence-list"></div>
+    </div>
+
+    <div class="card">
+        <h2>Face Emotion</h2>
+        <p id="faceEmotion">Waiting for webcam analysis...</p>
+    </div>
+
+    <div class="card highlight">
+        <h2>Final Emotion</h2>
+        <p id="finalEmotion">-</p>
+        <p id="fusionSource" class="small-note"></p>
+    </div>
+</div>
+
+<footer class="footer">
+    <div class="footer-content">
+        <h3>Developed By</h3>
+        <div class="team">
+            <span>Rishav Kumar Singh</span>
+            <span>|</span>
+            <span>Aseem Raj</span>
+            <span>|</span>
+            <span>Pintu Raj</span>
+            <span>|</span>
+            <span>Naveen Kumar</span>
+            <span>|</span>
+            <span>Aniket Kumar Singh</span>
+        </div>
+        <p class="copyright">
+            Copyright 2026 Speech Emotion Recognition Project
+        </p>
+    </div>
+</footer>
+
+<script>
+const RECORD_SECONDS = 9;
+let countdownTimer = null;
+let isProcessing = false;
+
+function setButtonState(disabled, label) {
+    const startBtn = document.getElementById("startBtn");
+    startBtn.disabled = disabled;
+    startBtn.innerText = label;
+}
+
+function resetProgress() {
+    document.getElementById("recordProgress").style.width = "0%";
+}
+
+function startCountdown() {
+    let elapsed = 0;
+    const statusElement = document.getElementById("status");
+    resetProgress();
+
+    statusElement.innerText = `Recording started: ${RECORD_SECONDS}s remaining`;
+    countdownTimer = setInterval(() => {
+        elapsed += 1;
+        const remaining = Math.max(RECORD_SECONDS - elapsed, 0);
+        const progress = (elapsed / RECORD_SECONDS) * 100;
+        document.getElementById("recordProgress").style.width = `${Math.min(progress, 100)}%`;
+
+        if (remaining > 0) {
+            statusElement.innerText = `Recording in progress: ${remaining}s remaining`;
+        } else {
+            statusElement.innerText = "Analyzing emotions...";
+            clearInterval(countdownTimer);
+            countdownTimer = null;
+        }
+    }, 1000);
+}
+
+function stopCountdown() {
+    if (countdownTimer) {
+        clearInterval(countdownTimer);
+        countdownTimer = null;
+    }
+}
+
+function renderTimeline(items) {
+    const timeline = document.getElementById("timeline");
+    timeline.innerHTML = "";
+
+    items.forEach((item) => {
+        const li = document.createElement("li");
+        const confidence = Number(item.confidence || 0) * 100;
+        li.innerText = `${item.time} -> ${item.emotion} (${confidence.toFixed(1)}%)`;
+        timeline.appendChild(li);
+    });
+}
+
+function renderConfidenceBars(scores) {
+    const holder = document.getElementById("confidenceBars");
+    holder.innerHTML = "";
+
+    const entries = Object.entries(scores || {}).sort((a, b) => b[1] - a[1]);
+    if (entries.length === 0) {
+        holder.innerHTML = "<p>No confidence data available.</p>";
+        return;
+    }
+
+    entries.forEach(([label, value]) => {
+        const row = document.createElement("div");
+        row.className = "score-row";
+        row.innerHTML = `
+            <span class="score-label">${label}</span>
+            <div class="score-track">
+                <div class="score-fill" style="width: ${(value * 100).toFixed(1)}%"></div>
+            </div>
+            <span class="score-value">${(value * 100).toFixed(1)}%</span>
+        `;
+        holder.appendChild(row);
+    });
+}
+
+async function updateFaceStatus() {
+    try {
+        const response = await fetch("/face_status");
+        const data = await response.json();
+        const confidence = Number(data.confidence || 0) * 100;
+        document.getElementById("faceEmotion").innerText =
+            `${data.emotion || "No face detected"} (${confidence.toFixed(1)}%)`;
+    } catch (err) {
+        document.getElementById("faceEmotion").innerText = "Webcam status unavailable";
+    }
+}
+
+async function startProcess() {
+    if (isProcessing) {
+        return;
+    }
+
+    isProcessing = true;
+    setButtonState(true, "Processing...");
+    startCountdown();
+
+    try {
+        const response = await fetch("/process", { method: "POST" });
+        const data = await response.json();
+
+        if (!response.ok || data.error) {
+            throw new Error(data.error || "Unable to process request.");
+        }
+
+        stopCountdown();
+        document.getElementById("status").innerText = "Detection completed successfully.";
+
+        renderTimeline(data.speech_timeline || []);
+        renderConfidenceBars(data.speech_scores || {});
+
+        const speechConfidence = Number(data.speech_confidence || 0) * 100;
+        document.getElementById("speechEmotion").innerText =
+            `${data.speech_emotion || "-"} (${speechConfidence.toFixed(1)}%)`;
+
+        const faceConfidence = Number(data.face_confidence || 0) * 100;
+        document.getElementById("faceEmotion").innerText =
+            `${data.face_emotion || "-"} (${faceConfidence.toFixed(1)}%)`;
+
+        const finalConfidence = Number(data.final_confidence || 0) * 100;
+        document.getElementById("finalEmotion").innerText =
+            `${data.final_emotion || "-"} (${finalConfidence.toFixed(1)}%)`;
+        document.getElementById("fusionSource").innerText =
+            `Fusion mode: ${data.fusion_source || "unknown"}`;
+    } catch (err) {
+        stopCountdown();
+        document.getElementById("status").innerText = `Error: ${err.message}`;
+    } finally {
+        isProcessing = false;
+        setButtonState(false, "Start Detection");
+    }
+}
+
+document.addEventListener("DOMContentLoaded", () => {
+    updateFaceStatus();
+    setInterval(updateFaceStatus, 2000);
+});
+</script>
+</body>
+</html>

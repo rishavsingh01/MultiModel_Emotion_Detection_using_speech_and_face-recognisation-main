@@ -1,0 +1,74 @@
+import cv2
+from deepface import DeepFace
+import threading
+
+# Shared state
+result = {}
+lock = threading.Lock()
+
+def analyze_frame(frame):
+    """Run DeepFace analysis in a background thread."""
+    try:
+        analysis = DeepFace.analyze(
+            frame,
+            actions=['emotion', 'age', 'gender'],
+            enforce_detection=False
+        )
+        with lock:
+            result['data'] = analysis[0]
+    except Exception as e:
+        with lock:
+            result['data'] = None
+
+cap = cv2.VideoCapture(0)  # 0 = default laptop camera
+frame_count = 0
+analyzing = False
+
+print("Press 'q' to quit.")
+
+while True:
+    ret, frame = cap.read()
+    if not ret:
+        print("Failed to grab frame.")
+        break
+
+    frame_count += 1
+
+    # Run analysis every 30 frames to avoid lag
+    if frame_count % 30 == 0 and not analyzing:
+        analyzing = True
+        thread = threading.Thread(
+            target=lambda: [analyze_frame(frame.copy()), globals().update(analyzing=False)],
+            daemon=True
+        )
+        thread.start()
+
+    # Overlay results on frame
+    with lock:
+        data = result.get('data')
+
+    if data:
+        emotion = data.get('dominant_emotion', '')
+        age = data.get('age', '')
+        gender = data.get('dominant_gender', '')
+
+        cv2.putText(frame, f"Emotion: {emotion}", (10, 30),
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.8, (0, 255, 0), 2)
+        cv2.putText(frame, f"Age: {age}", (10, 65),
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.8, (0, 255, 255), 2)
+        cv2.putText(frame, f"Gender: {gender}", (10, 100),
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.8, (255, 100, 0), 2)
+
+        # Draw face box if available
+        region = data.get('region', {})
+        x, y, w, h = region.get('x',0), region.get('y',0), region.get('w',0), region.get('h',0)
+        if w and h:
+            cv2.rectangle(frame, (x, y), (x+w, y+h), (0, 255, 0), 2)
+
+    cv2.imshow("Live Cam - DeepFace", frame)
+
+    if cv2.waitKey(1) & 0xFF == ord('q'):
+        break
+
+cap.release()
+cv2.destroyAllWindows()

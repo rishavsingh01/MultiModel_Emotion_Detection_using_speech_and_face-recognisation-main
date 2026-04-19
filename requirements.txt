@@ -1,0 +1,12 @@
+flask
+numpy
+librosa
+scikit-learn
+sounddevice
+soundfile
+scipy
+pandas
+matplotlib
+kagglehub
+opencv-python
+deepface

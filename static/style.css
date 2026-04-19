@@ -1,0 +1,142 @@
+body {
+    font-family: "Segoe UI", sans-serif;
+    background: linear-gradient(140deg, #0f2f2c, #114258, #1b4d30);
+    margin: 0;
+    padding: 0;
+    color: #f5f9ff;
+}
+
+.container {
+    width: min(900px, 92%);
+    margin: auto;
+    text-align: center;
+    padding: 20px 0 28px;
+}
+
+h1 {
+    margin-bottom: 24px;
+    color: #8ef6d3;
+    letter-spacing: 0;
+}
+
+.card {
+    background: rgba(7, 27, 41, 0.88);
+    margin: 14px 0;
+    padding: 18px;
+    border-radius: 8px;
+    box-shadow: 0 4px 15px rgba(0, 0, 0, 0.35);
+}
+
+.card img {
+    max-width: 100%;
+    border-radius: 8px;
+}
+
+.highlight {
+    background: #8ef6d3;
+    color: #09322b;
+    font-weight: 700;
+}
+
+button {
+    padding: 12px 25px;
+    background: #8ef6d3;
+    border: none;
+    border-radius: 8px;
+    color: #082f2c;
+    font-size: 16px;
+    cursor: pointer;
+    transition: background 0.2s ease;
+}
+
+button:hover:enabled {
+    background: #6fe2c0;
+}
+
+button:disabled {
+    cursor: not-allowed;
+    opacity: 0.8;
+}
+
+.progress-wrap {
+    width: min(520px, 100%);
+    margin: 10px auto 0;
+    background: rgba(255, 255, 255, 0.15);
+    border-radius: 8px;
+    height: 10px;
+    overflow: hidden;
+}
+
+.progress-bar {
+    width: 0;
+    height: 100%;
+    background: #8ef6d3;
+    transition: width 0.2s linear;
+}
+
+ul {
+    list-style: none;
+    padding: 0;
+    margin: 0;
+}
+
+li {
+    background: rgba(255, 255, 255, 0.08);
+    margin: 6px 0;
+    padding: 10px;
+    border-radius: 8px;
+}
+
+.confidence-list {
+    margin-top: 12px;
+}
+
+.score-row {
+    display: grid;
+    grid-template-columns: 85px 1fr 70px;
+    align-items: center;
+    gap: 10px;
+    margin: 8px 0;
+}
+
+.score-label,
+.score-value {
+    text-transform: capitalize;
+    font-size: 14px;
+}
+
+.score-track {
+    background: rgba(255, 255, 255, 0.18);
+    border-radius: 8px;
+    height: 10px;
+    overflow: hidden;
+}
+
+.score-fill {
+    height: 100%;
+    background: #8ef6d3;
+}
+
+.small-note {
+    margin-top: 6px;
+    font-size: 13px;
+}
+
+.footer {
+    padding: 16px 10px 24px;
+    text-align: center;
+}
+
+.team {
+    display: flex;
+    flex-wrap: wrap;
+    justify-content: center;
+    gap: 8px;
+}
+
+@media (max-width: 600px) {
+    .score-row {
+        grid-template-columns: 70px 1fr 60px;
+        gap: 8px;
+    }
+}
