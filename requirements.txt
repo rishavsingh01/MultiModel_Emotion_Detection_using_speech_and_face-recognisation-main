@@ -1,12 +1,14 @@
-flask
-numpy
-librosa
-scikit-learn
-sounddevice
-soundfile
-scipy
-pandas
-matplotlib
-kagglehub
-opencv-python
-deepface
+# this is the requirements libraries for the Speech Emotion Detection project. It lists all the necessary libraries and their versions that need to be installed to run the project successfully.
+
+Flask==3.0.0
+numpy==1.26.4
+librosa==0.10.1
+scikit-learn==1.4.0
+sounddevice==0.4.7
+soundfile==0.12.1
+scipy==1.12.0
+pandas==2.2.0
+matplotlib==3.8.2
+kagglehub==0.2.0
+opencv-python==4.9.0.80
+deepface==0.0.81
