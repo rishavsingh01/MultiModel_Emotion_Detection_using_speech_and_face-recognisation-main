@@ -1,5 +1,6 @@
 from collections import defaultdict
 from threading import Lock
+import platform
 
 from flask import Flask, render_template, jsonify, Response
 import sounddevice as sd
@@ -9,25 +10,29 @@ import cv2
 from speech_emotion import analyze_emotion, predict_emotion
 from facial_emotion import detect_face_emotion
 
-RECORD_SECONDS = 6
+# Configure audio capture, fusion weights, and fallback camera indexes.
+RECORD_SECONDS = 9
 SAMPLE_RATE = 22050
 SPEECH_MODEL_WEIGHT = 0.7
 FACE_MODEL_WEIGHT = 0.3
+CAMERA_INDEX_CANDIDATES = (0, 1, 2)
 
+# Map face model labels into the speech model's 8-class label space.
 FACE_TO_SPEECH_EMOTION = {
     "angry": "angry",
     "sad": "sad",
     "happy": "happy",
     "neutral": "neutral",
-    "fear": "sad",
-    "fearful": "sad",
-    "disgust": "angry",
-    "disgusted": "angry",
-    "surprise": "happy",
-    "surprised": "happy",
-    "calm": "neutral"
+    "calm": "calm",
+    "fear": "fearful",
+    "fearful": "fearful",
+    "disgust": "disgusted",
+    "disgusted": "disgusted",
+    "surprise": "surprised",
+    "surprised": "surprised",
 }
 
+# Store the latest face inference snapshot shared across requests.
 latest_face_state = {
     "emotion": "No face detected",
     "confidence": 0.0,
@@ -38,6 +43,26 @@ face_state_lock = Lock()
 app = Flask(__name__)
 
 
+# Open webcam using platform-specific backends with index fallbacks.
+def open_webcam():
+    system_name = platform.system().lower()
+
+    if system_name == "windows":
+        backend_candidates = [cv2.CAP_DSHOW, cv2.CAP_MSMF, cv2.CAP_ANY]
+    else:
+        backend_candidates = [cv2.CAP_ANY]
+
+    for index in CAMERA_INDEX_CANDIDATES:
+        for backend in backend_candidates:
+            cap = cv2.VideoCapture(index, backend)
+            if cap.isOpened():
+                return cap
+            cap.release()
+
+    return None
+
+
+# Record mono audio for emotion analysis.
 def record_audio(duration=RECORD_SECONDS, fs=SAMPLE_RATE):
     print("Recording...")
     audio = sd.rec(int(duration * fs), samplerate=fs, channels=1)
@@ -45,12 +70,14 @@ def record_audio(duration=RECORD_SECONDS, fs=SAMPLE_RATE):
     return audio.flatten(), fs
 
 
+# Normalize external face labels into internal speech emotion labels.
 def normalize_face_emotion(face_emotion):
     if not face_emotion:
         return None
     return FACE_TO_SPEECH_EMOTION.get(str(face_emotion).lower())
 
 
+# Aggregate chunk-level speech outputs into a single stabilized speech summary.
 def summarize_speech_timeline(timeline):
     if not timeline:
         return "unknown", 0.0, {}
@@ -84,52 +111,72 @@ def summarize_speech_timeline(timeline):
         key=lambda item: item[1],
         reverse=True
     )
-    dominant_emotion = max(score_by_emotion, key=score_by_emotion.get)
-    dominant_confidence = normalized_scores.get(dominant_emotion, 0.0)
+    dominant_emotion = str(sorted_scores[0][0])
+    dominant_confidence = float(sorted_scores[0][1])
 
-    # Low-margin predictions are often unstable and biased to one class.
+    # Stabilize low-margin predictions by preferring calm/neutral when confidence is weak.
     if len(sorted_scores) > 1:
-        top_score = float(sorted_scores[0][1])
+        top_score = dominant_confidence
         second_score = float(sorted_scores[1][1])
-        if "neutral" in normalized_scores and (top_score < 0.45 or (top_score - second_score) < 0.08):
-            dominant_emotion = "neutral"
-            dominant_confidence = float(normalized_scores["neutral"])
+        margin = top_score - second_score
+        calm_score = float(normalized_scores.get("calm", 0.0))
+        neutral_score = float(normalized_scores.get("neutral", 0.0))
+        fallback_score = max(calm_score, neutral_score)
+
+        if fallback_score > 0 and (top_score < 0.4 or margin < 0.06):
+            dominant_emotion = "calm" if calm_score >= neutral_score else "neutral"
+            dominant_confidence = fallback_score
 
     return dominant_emotion, dominant_confidence, normalized_scores
 
 
-def final_emotion(speech_emotion, speech_confidence, face_emotion, face_confidence):
+# Fuse speech and face evidence into one final emotion prediction.
+def final_emotion(speech_emotion, speech_confidence, speech_scores, face_emotion, face_confidence):
     face_mapped = normalize_face_emotion(face_emotion)
-    if face_mapped is None:
+
+    # Blend full speech score distribution with face confidence for more stable fusion.
+    combined_scores = defaultdict(float)
+    if speech_scores:
+        for emotion, score in speech_scores.items():
+            combined_scores[str(emotion)] += SPEECH_MODEL_WEIGHT * max(float(score), 0.0)
+    else:
+        combined_scores[speech_emotion] += SPEECH_MODEL_WEIGHT * max(speech_confidence, 0.01)
+
+    if face_mapped is not None:
+        combined_scores[face_mapped] += FACE_MODEL_WEIGHT * max(face_confidence, 0.01)
+
+    if not combined_scores:
         return {
             "emotion": speech_emotion,
             "confidence": speech_confidence,
             "source": "speech_only"
         }
 
-    combined_scores = defaultdict(float)
-    combined_scores[speech_emotion] += SPEECH_MODEL_WEIGHT * max(speech_confidence, 0.01)
-    combined_scores[face_mapped] += FACE_MODEL_WEIGHT * max(face_confidence, 0.01)
-
-    final_label = max(combined_scores, key=combined_scores.get)
+    final_label = str(max(combined_scores, key=combined_scores.get))
     total = float(sum(combined_scores.values()))
     final_confidence = round(combined_scores[final_label] / total, 4) if total else 0.0
 
     return {
         "emotion": final_label,
         "confidence": final_confidence,
-        "source": "agreement" if speech_emotion == face_mapped else "weighted_fusion"
+        "source": (
+            "agreement"
+            if face_mapped is not None and speech_emotion == face_mapped
+            else "weighted_fusion" if face_mapped is not None else "speech_only"
+        )
     }
 
 
 @app.route("/")
 def home():
-    return render_template("index.html")
+    # Render the dashboard and pass backend recording duration to the frontend.
+    return render_template("index.html", record_seconds=RECORD_SECONDS)
 
 
 @app.route("/process", methods=["POST"])
 def process():
     try:
+        # Capture audio and reject near-silent recordings.
         audio, sr = record_audio(duration=RECORD_SECONDS)
         rms_energy = float(np.sqrt(np.mean(np.square(audio))))
         if rms_energy < 0.005:
@@ -137,9 +184,11 @@ def process():
                 "error": "Audio level is too low. Please speak louder and try again."
             }), 400
 
+        # Run speech timeline inference and summarize it into one speech label.
         timeline = analyze_emotion(audio, sr, predict_emotion)
         speech_emotion, speech_confidence, speech_scores = summarize_speech_timeline(timeline)
 
+        # Read latest face snapshot and fuse it with speech prediction.
         with face_state_lock:
             face_state = dict(latest_face_state)
 
@@ -149,6 +198,7 @@ def process():
         fusion_result = final_emotion(
             speech_emotion,
             speech_confidence,
+            speech_scores,
             face_emotion,
             face_confidence
         )
@@ -170,12 +220,13 @@ def process():
 
 
 def generate_frames():
-    cap = cv2.VideoCapture(0)
+    # Stream webcam frames while periodically refreshing face emotion inference.
+    cap = open_webcam()
     frame_counter = 0
     current_emotion = "No face detected"
     current_confidence = 0.0
 
-    if not cap.isOpened():
+    if cap is None:
         with face_state_lock:
             latest_face_state.update({
                 "emotion": "Webcam unavailable",
@@ -237,14 +288,24 @@ def generate_frames():
 
 @app.route("/video_feed")
 def video_feed():
-    return Response(generate_frames(), mimetype="multipart/x-mixed-replace; boundary=frame")
+    # Serve MJPEG stream with no-cache headers to keep browser feed fresh.
+    return Response(
+        generate_frames(),
+        mimetype="multipart/x-mixed-replace; boundary=frame",
+        headers={
+            "Cache-Control": "no-store, no-cache, must-revalidate, max-age=0",
+            "Pragma": "no-cache",
+            "Expires": "0",
+        },
+    )
 
 
 @app.route("/face_status")
 def face_status():
+    # Expose the latest cached face inference for frontend polling.
     with face_state_lock:
         return jsonify(dict(latest_face_state))
 
 
 if __name__ == "__main__":
-    app.run(debug=True)
+    app.run(debug=True, use_reloader=False)

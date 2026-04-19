@@ -68,7 +68,7 @@
 </footer>
 
 <script>
-const RECORD_SECONDS = 9;
+const RECORD_SECONDS = Number("{{ record_seconds }}");
 let countdownTimer = null;
 let isProcessing = false;
 
@@ -115,10 +115,11 @@ function renderTimeline(items) {
     const timeline = document.getElementById("timeline");
     timeline.innerHTML = "";
 
-    items.forEach((item) => {
+    items.forEach((item, idx) => {
         const li = document.createElement("li");
         const confidence = Number(item.confidence || 0) * 100;
-        li.innerText = `${item.time} -> ${item.emotion} (${confidence.toFixed(1)}%)`;
+        const interval = item.time || `${idx * 3}-${(idx + 1) * 3}`;
+        li.innerText = `${interval} sec -> ${item.emotion} (${confidence.toFixed(1)}%)`;
         timeline.appendChild(li);
     });
 }
@@ -204,7 +205,23 @@ async function startProcess() {
     }
 }
 
+function initializeVideoFeed() {
+    const videoElement = document.getElementById("videoFeed");
+
+    const refreshFeed = () => {
+        videoElement.src = `/video_feed?t=${Date.now()}`;
+    };
+
+    videoElement.addEventListener("error", () => {
+        document.getElementById("faceEmotion").innerText = "Webcam stream disconnected. Retrying...";
+        setTimeout(refreshFeed, 1500);
+    });
+
+    refreshFeed();
+}
+
 document.addEventListener("DOMContentLoaded", () => {
+    initializeVideoFeed();
     updateFaceStatus();
     setInterval(updateFaceStatus, 2000);
 });

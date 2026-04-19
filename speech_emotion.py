@@ -10,8 +10,8 @@ SCALER_PATH = BASE_DIR / "scaler.pkl"
 ENCODER_PATH = BASE_DIR / "label_encoder.pkl"
 
 # Configure default time windows for chunk-based analysis.
-DEFAULT_CHUNK_DURATION = 2.5
-DEFAULT_HOP_DURATION = 1.0
+DEFAULT_CHUNK_DURATION = 3.0
+DEFAULT_HOP_DURATION = DEFAULT_CHUNK_DURATION
 
 # Load trained model objects once at module import time.
 with open(MODEL_PATH, "rb") as f:
@@ -97,7 +97,7 @@ def extract_feature(audio, sample_rate):
     return chosen.astype(np.float32)
 
 
-# Split long audio into overlapping chunks and attach per-chunk timing and energy.
+# Split long audio into fixed chunks and attach per-chunk timing and energy.
 def split_audio(audio, sr, chunk_duration=DEFAULT_CHUNK_DURATION, hop_duration=DEFAULT_HOP_DURATION):
     audio = np.asarray(audio, dtype=np.float32)
     chunk_samples = max(1, int(chunk_duration * sr))
@@ -188,21 +188,33 @@ def predict_emotion(audio, sr, return_details=False):
     return emotion
 
 
-# Run chunk-level inference and return a timeline of voiced emotional cues.
+# Run chunk-level inference and return a full fixed-interval emotion timeline.
 def analyze_emotion(audio, sr, predict_function):
     chunks = split_audio(audio, sr)
     if not chunks:
         return []
 
-    energies = np.array([chunk["energy"] for chunk in chunks], dtype=np.float32)
-    energy_threshold = max(0.004, float(np.percentile(energies, 35)))
-
-    voiced_chunks = [chunk for chunk in chunks if chunk["energy"] >= energy_threshold]
-    if not voiced_chunks:
-        voiced_chunks = [max(chunks, key=lambda item: item["energy"])]
+    # Keep fixed chunk positions in the timeline so UI always shows full 0-3, 3-6, 6-9 sequence.
+    timeline_chunks = chunks
+    energy_values = np.array([float(chunk["energy"]) for chunk in timeline_chunks], dtype=np.float32)
+    silence_threshold = max(0.003, float(np.percentile(energy_values, 30)))
 
     timeline = []
-    for chunk_info in voiced_chunks:
+    for chunk_info in timeline_chunks:
+        chunk_energy = float(chunk_info["energy"])
+        if chunk_energy < silence_threshold:
+            timeline.append(
+                {
+                    "time": f"{chunk_info['start']:.0f}-{chunk_info['end']:.0f}",
+                    "emotion": "neutral",
+                    "confidence": 0.0,
+                    "margin": 0.0,
+                    "energy": round(chunk_energy, 5),
+                    "probabilities": {},
+                }
+            )
+            continue
+
         prediction = predict_function(chunk_info["chunk"], sr, return_details=True)
 
         if isinstance(prediction, dict):
@@ -218,11 +230,11 @@ def analyze_emotion(audio, sr, predict_function):
 
         timeline.append(
             {
-                "time": f"{chunk_info['start']:.1f}-{chunk_info['end']:.1f} sec",
+                "time": f"{chunk_info['start']:.0f}-{chunk_info['end']:.0f}",
                 "emotion": emotion,
                 "confidence": round(confidence, 4),
                 "margin": round(margin, 4),
-                "energy": round(float(chunk_info["energy"]), 5),
+                "energy": round(chunk_energy, 5),
                 "probabilities": probabilities,
             }
         )
